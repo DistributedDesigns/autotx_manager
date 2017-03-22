@@ -175,6 +175,8 @@ func watchTriggers() {
 		nil,              // args
 	)
 
+	failOnError(err, "Failed to consume from quoteBroadcast Channel")
+
 	go func() {
 		for d := range msgs {
 			currQuote, err := types.ParseQuote(string(d.Body[:]))
@@ -207,6 +209,9 @@ func processIncomingAutoTx() {
 		false,       // no-wait
 		nil,         // args
 	)
+
+	failOnError(err, "Failed to consume from autoTxQueue")
+
 	go func() {
 		for d := range msgs {
 			//Add to tree
