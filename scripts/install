@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "Installing audit_logger"
+echo "Installing autotx_manager"
 go get
 go install
 
