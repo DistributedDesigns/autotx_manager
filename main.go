@@ -118,7 +118,7 @@ type aTxKey struct {
 }
 
 var autoTxStore = make(map[string]llrb.LLRB)
-var autoTxLookUp = make(map[aTxKey]types.AutoTxInit) //stock -> user -> autoTx
+var autoTxLookUp = make(map[aTxKey]types.AutoTxInit) // {stock, user} -> autoTx
 
 var sampleATxCancel = types.AutoTxCancel{
 	Stock:    "AAPL",
@@ -138,7 +138,7 @@ func insertTransaction(aTx types.AutoTxInit) {
 	autoTxStore[aTx.Stock] = tree
 }
 
-func fillAndRemove(item types.AutoTxInit) {
+func fillTransaction(item types.AutoTxInit) {
 
 }
 
@@ -157,10 +157,6 @@ func cancelTransaction(aTx types.AutoTxCancel) {
 	}
 	tree.Delete(autoTx) // Remove the transaction from the tree
 	fmt.Println(tree)
-}
-
-func triggerIterator(item llrb.Item) {
-	fillAndRemove(item.(types.AutoTxInit))
 }
 
 func watchTriggers() {
@@ -207,15 +203,26 @@ func watchTriggers() {
 			currQuote, err := types.ParseQuote(string(d.Body[:]))
 			failOnError(err, "Failed to parse Quote")
 			fmt.Printf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
-			_, found := autoTxStore[currQuote.Stock] // tree, found
+			tree, found := autoTxStore[currQuote.Stock] // tree, found
 			if !found {
 				// Tree doesn't exist. Throw err?
-				return
+				continue
 			}
 			// Get all trans less than or equal to trigger and fire them using the iterator in llrb (fillAutoTx)
+			modelATx := types.AutoTxInit{
+				Amount:   currQuote.Price,
+				Trigger:  currQuote.Price,
+				Stock:    currQuote.Stock,
+				UserID:   "autoTxManager",
+				WorkerID: ^uint64(0),
+			}
 
-			// tree.DescendLessOrEqual(currQuote, triggerIterator) // Shove via aTx object, or something else?
-			// Also have to remove them
+			tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
+				fillTransaction(i.(types.AutoTxInit))
+				fmt.Printf("Item has Trigger price %s, which is less than %f\n", i.(types.AutoTxInit).Trigger, currQuote.Price.ToFloat())
+				tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+				return true
+			})
 		}
 	}()
 }
