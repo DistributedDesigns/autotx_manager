@@ -186,7 +186,6 @@ func watchTriggers() {
 
 	failOnError(err, "Failed to bind to quotebroadcast queue")
 
-	// CANT DIRECTLY CONSUME quoteBroadcastEx. Setup an exchange for it and then consume that. Get them fresh quotes. @flagcommit
 	msgs, err := ch.Consume(
 		q.Name, // queue
 		"",     // consumer
