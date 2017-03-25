@@ -113,8 +113,12 @@ func initRMQ() {
 
 // END OF COPY PASTA FROM WORKER STUFF
 // =================================================================================== //
+type aTxKey struct {
+	Stock, UserID string
+}
 
 var autoTxStore = make(map[string]llrb.LLRB)
+var autoTxLookUp = make(map[aTxKey]types.AutoTxInit) //stock -> user -> autoTx
 
 var sampleATxCancel = types.AutoTxCancel{
 	Stock:    "AAPL",
@@ -128,7 +132,7 @@ func insertTransaction(aTx types.AutoTxInit) {
 		tree = *llrb.New()
 	}
 	tree.InsertNoReplace(aTx)
-
+	autoTxLookUp[aTxKey{aTx.Stock, aTx.UserID}] = aTx
 	fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	fmt.Println(tree)
 	autoTxStore[aTx.Stock] = tree
@@ -139,12 +143,20 @@ func fillAndRemove(item types.AutoTxInit) {
 }
 
 func cancelTransaction(aTx types.AutoTxCancel) {
-	_, found := autoTxStore[aTx.Stock]
+	tree, found := autoTxStore[aTx.Stock]
 	if !found {
 		// Tree doesn't exist. Throw err?
+		fmt.Printf("Tree not found\n")
 		return
 	}
-	// tree.Delete(aTx) // Remove the transaction from the tree
+	autoTx, found := autoTxLookUp[aTxKey{aTx.Stock, aTx.UserID}]
+	if !found {
+		// User has no autoTx. What a nerd.
+		fmt.Printf("aTx not found\n")
+		return
+	}
+	tree.Delete(autoTx) // Remove the transaction from the tree
+	fmt.Println(tree)
 }
 
 func triggerIterator(item llrb.Item) {
