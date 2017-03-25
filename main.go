@@ -164,15 +164,37 @@ func watchTriggers() {
 	ch, err := rmqConn.Channel()
 	failOnError(err, "Failed to open a channel")
 	defer ch.Close()
-	// CANT DIRECTLY CONSUME quoteBroadcastEx. Setup an exchange for it and then consume that. Get them fresh quotes. @flagcommit
-	msgs, err := ch.Consume(
-		quoteBroadcastEx, // queue
-		"",               // consumer
-		true,             // auto-ack
-		false,            // exclusive
-		false,            // no-local
+
+	q, err := ch.QueueDeclare(
+		fmt.Sprintf("%s:autoTx:updater", config.Redis.KeyPrefix), //name
+		true,  // durable
+		true,  // delete when unused
+		false, // exclusive
+		false, // no wait
+		nil,   // arguments
+	)
+
+	failOnError(err, "Failed to declare a receive queue")
+
+	err = ch.QueueBind(
+		q.Name,           //name
+		"#",              // routing key
+		quoteBroadcastEx, // exchange
 		false,            // no-wait
 		nil,              // args
+	)
+
+	failOnError(err, "Failed to bind to quotebroadcast queue")
+
+	// CANT DIRECTLY CONSUME quoteBroadcastEx. Setup an exchange for it and then consume that. Get them fresh quotes. @flagcommit
+	msgs, err := ch.Consume(
+		q.Name, // queue
+		"",     // consumer
+		true,   // auto-ack
+		false,  // exclusive
+		false,  // no-local
+		false,  // no-wait
+		nil,    // args
 	)
 
 	failOnError(err, "Failed to consume from quoteBroadcast Channel")
