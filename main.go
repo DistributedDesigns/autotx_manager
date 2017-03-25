@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"math/rand"
+	"time"
 
 	"github.com/distributeddesigns/currency"
 	types "github.com/distributeddesigns/shared_types"
@@ -114,17 +116,6 @@ func initRMQ() {
 
 var autoTxStore = make(map[string]llrb.LLRB)
 
-var sampAmt, _ = currency.NewFromString("150.55")
-var sampTrig, _ = currency.NewFromString("50.00")
-
-var sampleATxInit = types.AutoTxInit{
-	Amount:   sampAmt,
-	Trigger:  sampTrig,
-	Stock:    "AAPL",
-	UserID:   "Bob",
-	WorkerID: 4,
-}
-
 var sampleATxCancel = types.AutoTxCancel{
 	Stock:    "AAPL",
 	UserID:   "Bob",
@@ -140,6 +131,7 @@ func insertTransaction(aTx types.AutoTxInit) {
 
 	fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	fmt.Println(tree)
+	autoTxStore[aTx.Stock] = tree
 }
 
 func fillAndRemove(item types.AutoTxInit) {
@@ -178,7 +170,7 @@ func watchTriggers() {
 
 	err = ch.QueueBind(
 		q.Name,           //name
-		"#",              // routing key
+		"*.fresh",        // routing key
 		quoteBroadcastEx, // exchange
 		false,            // no-wait
 		nil,              // args
@@ -256,6 +248,17 @@ func pushSampleATxInit() {
 	ch, err := rmqConn.Channel()
 	failOnError(err, "Failed to open a channel")
 	defer ch.Close()
+
+	sampAmt, _ := currency.NewFromString(fmt.Sprintf("%d.%d", rand.Intn(100), rand.Intn(100)))
+	sampTrig, _ := currency.NewFromString(fmt.Sprintf("%d.%d", rand.Intn(100), rand.Intn(100)))
+
+	sampleATxInit := types.AutoTxInit{
+		Amount:   sampAmt,
+		Trigger:  sampTrig,
+		Stock:    "AAPL",
+		UserID:   "Bob",
+		WorkerID: 4,
+	}
 	body := sampleATxInit.ToCSV()
 	err = ch.Publish(
 		"",          // exchange
@@ -293,6 +296,8 @@ func pushSampleATxCancel() {
 }
 
 func main() {
+	rand.Seed(time.Now().UTC().UnixNano())
+
 	//Grab params and defaults
 	kingpin.Parse()
 
@@ -306,7 +311,10 @@ func main() {
 	// Blocking read from RMQ
 	processIncomingAutoTx()
 	watchTriggers()
-	pushSampleATxInit()
+	for i := 0; i < 5; i++ {
+		pushSampleATxInit()
+	}
+
 	pushSampleATxCancel()
 
 	// On autoTx, doAutoTx
