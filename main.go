@@ -113,16 +113,14 @@ func initRMQ() {
 
 // END OF COPY PASTA FROM WORKER STUFF
 // =================================================================================== //
-type aTxKey struct {
-	Stock, UserID string
-}
 
 var autoTxStore = make(map[string]llrb.LLRB)
-var autoTxLookUp = make(map[aTxKey]types.AutoTxInit) // {stock, user} -> autoTx
+var autoTxLookUp = make(map[types.AutoTxKey]types.AutoTxInit) // {stock, user} -> autoTx
 
 var sampleATxCancel = types.AutoTxCancel{
 	Stock:    "AAPL",
 	UserID:   "Bob",
+	Action:   "Buy",
 	WorkerID: 4,
 }
 
@@ -132,14 +130,14 @@ func insertTransaction(aTx types.AutoTxInit) {
 		tree = *llrb.New()
 	}
 	tree.InsertNoReplace(aTx)
-	autoTxLookUp[aTxKey{aTx.Stock, aTx.UserID}] = aTx
+	autoTxLookUp[types.AutoTxKey{Stock: aTx.Stock, UserID: aTx.UserID, Action: aTx.Action}] = aTx
 	fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	fmt.Println(tree)
 	autoTxStore[aTx.Stock] = tree
 }
 
 func fillTransaction(item types.AutoTxInit) {
-
+	// send to workers. Gotta go fast.
 }
 
 func cancelTransaction(aTx types.AutoTxCancel) {
@@ -149,7 +147,7 @@ func cancelTransaction(aTx types.AutoTxCancel) {
 		fmt.Printf("Tree not found\n")
 		return
 	}
-	autoTx, found := autoTxLookUp[aTxKey{aTx.Stock, aTx.UserID}]
+	autoTx, found := autoTxLookUp[types.AutoTxKey{Stock: aTx.Stock, UserID: aTx.UserID, Action: aTx.Action}]
 	if !found {
 		// User has no autoTx. What a nerd.
 		fmt.Printf("aTx not found\n")
@@ -276,6 +274,7 @@ func pushSampleATxInit() {
 		Trigger:  sampTrig,
 		Stock:    "AAPL",
 		UserID:   "Bob",
+		Action:   "Buy",
 		WorkerID: 4,
 	}
 	body := sampleATxInit.ToCSV()
@@ -330,11 +329,11 @@ func main() {
 	// Blocking read from RMQ
 	processIncomingAutoTx()
 	watchTriggers()
-	for i := 0; i < 5; i++ {
-		pushSampleATxInit()
-	}
+	// for i := 0; i < 5; i++ {
+	// 	pushSampleATxInit()
+	// }
 
-	pushSampleATxCancel()
+	// pushSampleATxCancel()
 
 	// On autoTx, doAutoTx
 	fmt.Println("autoTx Manager Spinning")
