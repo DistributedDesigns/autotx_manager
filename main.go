@@ -212,7 +212,7 @@ func watchTriggers() {
 				Trigger:  currQuote.Price,
 				Stock:    currQuote.Stock,
 				UserID:   "autoTxManager",
-				WorkerID: ^uint64(0),
+				WorkerID: ^int(0),
 			}
 
 			tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
