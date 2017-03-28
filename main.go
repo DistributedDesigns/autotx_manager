@@ -196,33 +196,31 @@ func watchTriggers() {
 
 	failOnError(err, "Failed to consume from quoteBroadcast Channel")
 
-	go func() {
-		for d := range msgs {
-			currQuote, err := types.ParseQuote(string(d.Body[:]))
-			failOnError(err, "Failed to parse Quote")
-			fmt.Printf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
-			tree, found := autoTxStore[currQuote.Stock] // tree, found
-			if !found {
-				// Tree doesn't exist. Throw err?
-				continue
-			}
-			// Get all trans less than or equal to trigger and fire them using the iterator in llrb (fillAutoTx)
-			modelATx := types.AutoTxInit{
-				Amount:   currQuote.Price,
-				Trigger:  currQuote.Price,
-				Stock:    currQuote.Stock,
-				UserID:   "autoTxManager",
-				WorkerID: ^int(0),
-			}
-
-			tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
-				fillTransaction(i.(types.AutoTxInit))
-				fmt.Printf("Item has Trigger price %s, which is less than %f\n", i.(types.AutoTxInit).Trigger, currQuote.Price.ToFloat())
-				tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-				return true
-			})
+	for d := range msgs {
+		currQuote, err := types.ParseQuote(string(d.Body[:]))
+		failOnError(err, "Failed to parse Quote")
+		fmt.Printf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
+		tree, found := autoTxStore[currQuote.Stock] // tree, found
+		if !found {
+			// Tree doesn't exist. Throw err?
+			continue
 		}
-	}()
+		// Get all trans less than or equal to trigger and fire them using the iterator in llrb (fillAutoTx)
+		modelATx := types.AutoTxInit{
+			Amount:   currQuote.Price,
+			Trigger:  currQuote.Price,
+			Stock:    currQuote.Stock,
+			UserID:   "autoTxManager",
+			WorkerID: ^int(0),
+		}
+
+		tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
+			fillTransaction(i.(types.AutoTxInit))
+			fmt.Printf("Item has Trigger price %s, which is less than %f\n", i.(types.AutoTxInit).Trigger, currQuote.Price.ToFloat())
+			tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			return true
+		})
+	}
 }
 
 func processIncomingAutoTx() {
@@ -242,23 +240,21 @@ func processIncomingAutoTx() {
 
 	failOnError(err, "Failed to consume from autoTxQueue")
 
-	go func() {
-		for d := range msgs {
-			//Add to tree
-			fmt.Printf("Received a message: %s\n", d.Body)
-			fmt.Printf("Message Type is: %s\n", d.Headers["transType"])
+	for d := range msgs {
+		//Add to tree
+		fmt.Printf("Received a message: %s\n", d.Body)
+		fmt.Printf("Message Type is: %s\n", d.Headers["transType"])
 
-			if d.Headers["transType"] == "autoTxInit" {
-				autoTx, err := types.ParseAutoTxInit(string(d.Body[:]))
-				failOnError(err, "Failed to parse AutoTxInit")
-				insertTransaction(autoTx)
-			} else {
-				autoTx, err := types.ParseAutoTxCancel(string(d.Body[:]))
-				failOnError(err, "Failed to parse AutoTxCancel")
-				cancelTransaction(autoTx)
-			}
+		if d.Headers["transType"] == "autoTxInit" {
+			autoTx, err := types.ParseAutoTxInit(string(d.Body[:]))
+			failOnError(err, "Failed to parse AutoTxInit")
+			insertTransaction(autoTx)
+		} else {
+			autoTx, err := types.ParseAutoTxCancel(string(d.Body[:]))
+			failOnError(err, "Failed to parse AutoTxCancel")
+			cancelTransaction(autoTx)
 		}
-	}()
+	}
 }
 
 func pushSampleATxInit() {
@@ -327,8 +323,8 @@ func main() {
 	defer rmqConn.Close()
 
 	// Blocking read from RMQ
-	processIncomingAutoTx()
-	watchTriggers()
+	go processIncomingAutoTx()
+	go watchTriggers()
 	// for i := 0; i < 5; i++ {
 	// 	pushSampleATxInit()
 	// }
