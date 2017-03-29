@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/distributeddesigns/currency"
@@ -124,7 +125,12 @@ func initRMQ() {
 // END OF COPY PASTA FROM WORKER STUFF
 // =================================================================================== //
 
-var autoTxStore = make(map[string]llrb.LLRB)
+// TreeKey : A key for accessing trees
+type TreeKey struct {
+	Stock, Action string
+}
+
+var autoTxStore = make(map[TreeKey]llrb.LLRB)
 var autoTxLookUp = make(map[types.AutoTxKey]types.AutoTxInit) // {stock, user} -> autoTx
 
 var sampleATxCancel = types.AutoTxKey{
@@ -134,7 +140,8 @@ var sampleATxCancel = types.AutoTxKey{
 }
 
 func insertTransaction(aTx types.AutoTxInit) {
-	tree, found := autoTxStore[aTx.AutoTxKey.Stock]
+	currTreeKey := TreeKey{aTx.AutoTxKey.Stock, aTx.AutoTxKey.Action}
+	tree, found := autoTxStore[currTreeKey]
 	if !found {
 		tree = *llrb.New()
 	}
@@ -142,7 +149,7 @@ func insertTransaction(aTx types.AutoTxInit) {
 	autoTxLookUp[aTx.AutoTxKey] = aTx
 	fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	fmt.Println(tree)
-	autoTxStore[aTx.AutoTxKey.Stock] = tree
+	autoTxStore[currTreeKey] = tree
 	fmt.Println(autoTxStore)
 }
 
@@ -151,7 +158,8 @@ func fillTransaction(item types.AutoTxInit) {
 }
 
 func cancelTransaction(aTxKey types.AutoTxKey) {
-	tree, found := autoTxStore[aTxKey.Stock]
+	currTreeKey := TreeKey{aTxKey.Stock, aTxKey.Action}
+	tree, found := autoTxStore[currTreeKey]
 	if !found {
 		// Tree doesn't exist. Throw err?
 		fmt.Printf("Tree not found\n")
@@ -211,10 +219,11 @@ func watchTriggers() {
 		currQuote, err := types.ParseQuote(string(d.Body[:]))
 		failOnError(err, "Failed to parse Quote")
 		fmt.Printf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
-		tree, found := autoTxStore[currQuote.Stock] // tree, found
-		if !found {
+		buyTree, buyFound := autoTxStore[TreeKey{currQuote.Stock, "Buy"}] // tree, found
+		sellTree, sellFound := autoTxStore[TreeKey{currQuote.Stock, "Sell"}]
+		if !buyFound && !sellFound {
 			// Tree doesn't exist. Throw err?
-			fmt.Printf("Tree for stock %s does not exist\n", currQuote.Stock)
+			fmt.Printf("BuyTree and SellTre for stock %s does not exist\n", currQuote.Stock)
 			continue
 		}
 		// Get all trans less than or equal to trigger and fire them using the iterator in llrb (fillAutoTx)
@@ -228,54 +237,76 @@ func watchTriggers() {
 		}
 
 		//Sell
-		tree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
+		sellTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
-			// body := autoTx.ToCSV()
-			// err = ch.Publish(
-			// 	autoTxExchange,                // exchange
-			// 	strconv.Itoa(autoTx.WorkerID), // routing key
-			// 	false, // mandatory
-			// 	false, // immediate
-			// 	amqp.Publishing{
-			// 		ContentType: "text/plain",
-			// 		Headers: amqp.Table{
-			// 			"transType": "autoTxInit",
-			// 		},
-			// 		Body: []byte(body),
-			// 	})
-			// failOnError(err, "Failed to publish a message")
-			fmt.Println(tree)
-			tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-			fmt.Println(tree)
+			fmt.Printf("Sell item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
+			fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
+			filledPrice := currQuote.Price
+			err := filledPrice.Mul(float64(numStock))
+			filledPrice.Add(remCash) // Re-add the unfilled value
+			failOnError(err, "Failed to multiply price")
+			autoTxFilled := types.AutoTxFilled{
+				AutoTxKey: autoTx.AutoTxKey,
+				AddFunds:  filledPrice,
+				AddStocks: 0,
+			}
+			body := autoTxFilled.ToCSV()
+			err = ch.Publish(
+				autoTxExchange,                // exchange
+				strconv.Itoa(autoTx.WorkerID), // routing key
+				false, // mandatory
+				false, // immediate
+				amqp.Publishing{
+					ContentType: "text/csv",
+					Headers: amqp.Table{
+						"transType": "autoTxInit",
+					},
+					Body: []byte(body),
+				})
+			failOnError(err, "Failed to publish a message")
+			fmt.Println(sellTree)
+			sellTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			fmt.Println(sellTree)
 			// Remove from autoTxStore
 			return true
 		})
+		autoTxStore[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
 
 		//Buy
-		tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
+		buyTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
-			// body := autoTx.ToCSV()
-			// err = ch.Publish(
-			// 	autoTxExchange,                // exchange
-			// 	strconv.Itoa(autoTx.WorkerID), // routing key
-			// 	false, // mandatory
-			// 	false, // immediate
-			// 	amqp.Publishing{
-			// 		ContentType: "text/plain",
-			// 		Headers: amqp.Table{
-			// 			"transType": "autoTxInit",
-			// 		},
-			// 		Body: []byte(body),
-			// 	})
-			// failOnError(err, "Failed to publish a message")
-			fmt.Println(tree)
-			tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-			fmt.Println(tree)
+			fmt.Printf("Buy item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+
+			filledStock, remCash := currQuote.Price.FitsInto(autoTx.Amount)
+			autoTxFilled := types.AutoTxFilled{
+				AutoTxKey: autoTx.AutoTxKey,
+				AddFunds:  remCash,
+				AddStocks: filledStock,
+			}
+			body := autoTxFilled.ToCSV()
+			err = ch.Publish(
+				autoTxExchange,                // exchange
+				strconv.Itoa(autoTx.WorkerID), // routing key
+				false, // mandatory
+				false, // immediate
+				amqp.Publishing{
+					ContentType: "text/csv",
+					Headers: amqp.Table{
+						"transType": "autoTxInit",
+					},
+					Body: []byte(body),
+				})
+			failOnError(err, "Failed to publish a message")
+			fmt.Println(buyTree)
+			buyTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			fmt.Println(buyTree)
 			// Remove from autoTxStore
 			return true
 		})
+		autoTxStore[TreeKey{currQuote.Stock, "Buy"}] = buyTree //update map with new buy tree TODO: POINTER STUFF SO THIS ISN'T SHIT
+
+		//fmt.Println(tree.Len())
 
 		//DOES NOT IMPLEMENT BUY!!
 	}
