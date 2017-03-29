@@ -237,7 +237,7 @@ func watchTriggers() {
 		}
 
 		//Sell
-		sellTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
+		sellTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
 			fmt.Printf("Sell item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
 			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
@@ -274,7 +274,7 @@ func watchTriggers() {
 		autoTxStore[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
 
 		//Buy
-		buyTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
+		buyTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
 			fmt.Printf("Buy item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
 
