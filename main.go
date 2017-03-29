@@ -118,6 +118,7 @@ func initRMQ() {
 		false,               // no-wait
 		nil,                 // args
 	)
+	failOnError(err, "Failed to declare exchange")
 }
 
 // END OF COPY PASTA FROM WORKER STUFF
