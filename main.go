@@ -84,7 +84,7 @@ func initRMQ() {
 		config.Rabbit.Host, config.Rabbit.Port,
 	)
 
-	fmt.Println(rabbitAddress)
+	//fmt.Println(rabbitAddress)
 
 	var err error
 	rmqConn, err = amqp.Dial(rabbitAddress)
@@ -147,10 +147,10 @@ func insertTransaction(aTx types.AutoTxInit) {
 	}
 	tree.InsertNoReplace(aTx)
 	autoTxLookUp[aTx.AutoTxKey] = aTx
-	fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
-	fmt.Println(tree)
+	//fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
+	//fmt.Println(tree)
 	autoTxStore[currTreeKey] = tree
-	fmt.Println(autoTxStore)
+	//fmt.Println(autoTxStore)
 }
 
 func fillTransaction(item types.AutoTxInit) {
@@ -162,18 +162,18 @@ func cancelTransaction(aTxKey types.AutoTxKey) {
 	tree, found := autoTxStore[currTreeKey]
 	if !found {
 		// Tree doesn't exist. Throw err?
-		fmt.Printf("Tree not found\n")
+		consoleLog.Debugf("Tree for stock %s with action %s not found\n", aTxKey.Stock, aTxKey.Action)
 		return
 	}
 	autoTx, found := autoTxLookUp[aTxKey]
 	if !found {
 		// User has no autoTx. What a nerd.
-		fmt.Printf("aTx not found\n")
+		consoleLog.Debugf("aTx for stock %s with action %s not found\n", aTxKey.Stock, aTxKey.Action)
 		return
 	}
 	tree.Delete(autoTx) // Remove the transaction from the tree
 	delete(autoTxLookUp, aTxKey)
-	fmt.Println(tree)
+	//fmt.Println(tree)
 }
 
 func watchTriggers() {
@@ -218,12 +218,12 @@ func watchTriggers() {
 	for d := range msgs {
 		currQuote, err := types.ParseQuote(string(d.Body[:]))
 		failOnError(err, "Failed to parse Quote")
-		fmt.Printf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
+		consoleLog.Debugf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
 		buyTree, buyFound := autoTxStore[TreeKey{currQuote.Stock, "Buy"}] // tree, found
 		sellTree, sellFound := autoTxStore[TreeKey{currQuote.Stock, "Sell"}]
 		if !buyFound && !sellFound {
 			// Tree doesn't exist. Throw err?
-			fmt.Printf("BuyTree and SellTre for stock %s does not exist\n", currQuote.Stock)
+			consoleLog.Debugf("BuyTree and SellTre for stock %s does not exist\n", currQuote.Stock)
 			continue
 		}
 		// Get all trans less than or equal to trigger and fire them using the iterator in llrb (fillAutoTx)
@@ -239,9 +239,9 @@ func watchTriggers() {
 		//Sell
 		sellTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Sell item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			//fmt.Printf("Sell item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
 			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
-			fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
+			//fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
 			filledPrice := currQuote.Price
 			err = filledPrice.Mul(float64(numStock))
 			filledPrice.Add(remCash) // Re-add the unfilled value
@@ -265,11 +265,10 @@ func watchTriggers() {
 					Body: []byte(body),
 				})
 			failOnError(err, "Failed to publish a message")
-			fmt.Println(sellTree)
+			//fmt.Println(sellTree)
 			sellTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
 			delete(autoTxLookUp, autoTx.AutoTxKey)
-			fmt.Println(sellTree)
-			// Remove from autoTxStore
+			//fmt.Println(sellTree)
 			return true
 		})
 		autoTxStore[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
@@ -299,10 +298,10 @@ func watchTriggers() {
 					Body: []byte(body),
 				})
 			failOnError(err, "Failed to publish a message")
-			fmt.Println(buyTree)
+			//fmt.Println(buyTree)
 			buyTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
 			delete(autoTxLookUp, autoTx.AutoTxKey)
-			fmt.Println(buyTree)
+			//fmt.Println(buyTree)
 			// Remove from autoTxStore
 			return true
 		})
@@ -334,8 +333,8 @@ func processIncomingAutoTx() {
 	for d := range msgs {
 
 		// get stuff from localquotecache and fill before it gets tree'd.
-		fmt.Printf("Received a message: %s\n", d.Body)
-		fmt.Printf("Message Type is: %s\n", d.Headers["transType"])
+		//fmt.Printf("Received a message: %s\n", d.Body)
+		//fmt.Printf("Message Type is: %s\n", d.Headers["transType"])
 
 		if d.Headers["transType"] == "autoTxInit" {
 			autoTx, err := types.ParseAutoTxInit(string(d.Body[:]))
@@ -426,6 +425,6 @@ func main() {
 	// pushSampleATxCancel()
 
 	// On autoTx, doAutoTx
-	fmt.Println("autoTx Manager Spinning")
+	//fmt.Println("autoTx Manager Spinning")
 	<-forever
 }
