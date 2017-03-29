@@ -239,7 +239,7 @@ func watchTriggers() {
 		//Sell
 		sellTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Sell item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			fmt.Printf("Sell item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
 			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
 			//fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
 			filledPrice := currQuote.Price
@@ -276,7 +276,7 @@ func watchTriggers() {
 		//Buy
 		buyTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Buy item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			fmt.Printf("Buy item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
 
 			filledStock, remCash := currQuote.Price.FitsInto(autoTx.Amount)
 			autoTxFilled := types.AutoTxFilled{
