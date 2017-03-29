@@ -34,6 +34,7 @@ var (
 
 const (
 	autoTxQueue      = "autoTx"
+	autoTxExchange   = "autoTx_resolved"
 	quoteBroadcastEx = "quote_broadcast"
 )
 
@@ -108,7 +109,15 @@ func initRMQ() {
 	failOnError(err, "Failed to declare a queue")
 
 	//RPC Init stuff (TODO)
-
+	err = ch.ExchangeDeclare(
+		autoTxExchange,      // name
+		amqp.ExchangeDirect, // type
+		true,                // durable
+		false,               // auto-deleted
+		false,               // internal
+		false,               // no-wait
+		nil,                 // args
+	)
 }
 
 // END OF COPY PASTA FROM WORKER STUFF
@@ -117,43 +126,44 @@ func initRMQ() {
 var autoTxStore = make(map[string]llrb.LLRB)
 var autoTxLookUp = make(map[types.AutoTxKey]types.AutoTxInit) // {stock, user} -> autoTx
 
-var sampleATxCancel = types.AutoTxCancel{
-	Stock:    "AAPL",
-	UserID:   "Bob",
-	Action:   "Buy",
-	WorkerID: 4,
+var sampleATxCancel = types.AutoTxKey{
+	Stock:  "AAPL",
+	UserID: "Bob",
+	Action: "Buy",
 }
 
 func insertTransaction(aTx types.AutoTxInit) {
-	tree, found := autoTxStore[aTx.Stock]
+	tree, found := autoTxStore[aTx.AutoTxKey.Stock]
 	if !found {
 		tree = *llrb.New()
 	}
 	tree.InsertNoReplace(aTx)
-	autoTxLookUp[types.AutoTxKey{Stock: aTx.Stock, UserID: aTx.UserID, Action: aTx.Action}] = aTx
+	autoTxLookUp[aTx.AutoTxKey] = aTx
 	fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	fmt.Println(tree)
-	autoTxStore[aTx.Stock] = tree
+	autoTxStore[aTx.AutoTxKey.Stock] = tree
+	fmt.Println(autoTxStore)
 }
 
 func fillTransaction(item types.AutoTxInit) {
-	// send to workers. Gotta go fast.
+
 }
 
-func cancelTransaction(aTx types.AutoTxCancel) {
-	tree, found := autoTxStore[aTx.Stock]
+func cancelTransaction(aTxKey types.AutoTxKey) {
+	tree, found := autoTxStore[aTxKey.Stock]
 	if !found {
 		// Tree doesn't exist. Throw err?
 		fmt.Printf("Tree not found\n")
 		return
 	}
-	autoTx, found := autoTxLookUp[types.AutoTxKey{Stock: aTx.Stock, UserID: aTx.UserID, Action: aTx.Action}]
+	autoTx, found := autoTxLookUp[aTxKey]
 	if !found {
 		// User has no autoTx. What a nerd.
 		fmt.Printf("aTx not found\n")
 		return
 	}
 	tree.Delete(autoTx) // Remove the transaction from the tree
+	delete(autoTxLookUp, aTxKey)
 	fmt.Println(tree)
 }
 
@@ -203,23 +213,70 @@ func watchTriggers() {
 		tree, found := autoTxStore[currQuote.Stock] // tree, found
 		if !found {
 			// Tree doesn't exist. Throw err?
+			fmt.Printf("Tree for stock %s does not exist\n", currQuote.Stock)
 			continue
 		}
 		// Get all trans less than or equal to trigger and fire them using the iterator in llrb (fillAutoTx)
 		modelATx := types.AutoTxInit{
-			Amount:   currQuote.Price,
-			Trigger:  currQuote.Price,
-			Stock:    currQuote.Stock,
-			UserID:   "autoTxManager",
-			WorkerID: ^int(0),
+			AutoTxKey: types.AutoTxKey{
+				Stock:  currQuote.Stock,
+				UserID: "autoTxManager",
+			},
+			Amount:  currQuote.Price,
+			Trigger: currQuote.Price,
 		}
 
-		tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
-			fillTransaction(i.(types.AutoTxInit))
-			fmt.Printf("Item has Trigger price %s, which is less than %f\n", i.(types.AutoTxInit).Trigger, currQuote.Price.ToFloat())
+		//Sell
+		tree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
+			autoTx := i.(types.AutoTxInit)
+			fmt.Printf("Item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			// body := autoTx.ToCSV()
+			// err = ch.Publish(
+			// 	autoTxExchange,                // exchange
+			// 	strconv.Itoa(autoTx.WorkerID), // routing key
+			// 	false, // mandatory
+			// 	false, // immediate
+			// 	amqp.Publishing{
+			// 		ContentType: "text/plain",
+			// 		Headers: amqp.Table{
+			// 			"transType": "autoTxInit",
+			// 		},
+			// 		Body: []byte(body),
+			// 	})
+			// failOnError(err, "Failed to publish a message")
+			fmt.Println(tree)
 			tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			fmt.Println(tree)
+			// Remove from autoTxStore
 			return true
 		})
+
+		//Buy
+		tree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
+			autoTx := i.(types.AutoTxInit)
+			fmt.Printf("Item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			// body := autoTx.ToCSV()
+			// err = ch.Publish(
+			// 	autoTxExchange,                // exchange
+			// 	strconv.Itoa(autoTx.WorkerID), // routing key
+			// 	false, // mandatory
+			// 	false, // immediate
+			// 	amqp.Publishing{
+			// 		ContentType: "text/plain",
+			// 		Headers: amqp.Table{
+			// 			"transType": "autoTxInit",
+			// 		},
+			// 		Body: []byte(body),
+			// 	})
+			// failOnError(err, "Failed to publish a message")
+			fmt.Println(tree)
+			tree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			fmt.Println(tree)
+			// Remove from autoTxStore
+			return true
+		})
+
+		//DOES NOT IMPLEMENT BUY!!
 	}
 }
 
@@ -241,7 +298,8 @@ func processIncomingAutoTx() {
 	failOnError(err, "Failed to consume from autoTxQueue")
 
 	for d := range msgs {
-		//Add to tree
+
+		// get stuff from localquotecache and fill before it gets tree'd.
 		fmt.Printf("Received a message: %s\n", d.Body)
 		fmt.Printf("Message Type is: %s\n", d.Headers["transType"])
 
@@ -250,8 +308,8 @@ func processIncomingAutoTx() {
 			failOnError(err, "Failed to parse AutoTxInit")
 			insertTransaction(autoTx)
 		} else {
-			autoTx, err := types.ParseAutoTxCancel(string(d.Body[:]))
-			failOnError(err, "Failed to parse AutoTxCancel")
+			autoTx, err := types.ParseAutoTxKey(string(d.Body[:]))
+			failOnError(err, "Failed to parse AutoTxKey")
 			cancelTransaction(autoTx)
 		}
 	}
@@ -266,11 +324,13 @@ func pushSampleATxInit() {
 	sampTrig, _ := currency.NewFromString(fmt.Sprintf("%d.%d", rand.Intn(100), rand.Intn(100)))
 
 	sampleATxInit := types.AutoTxInit{
+		AutoTxKey: types.AutoTxKey{
+			Stock:  "AAPL",
+			UserID: "Bob",
+			Action: "Buy",
+		},
 		Amount:   sampAmt,
 		Trigger:  sampTrig,
-		Stock:    "AAPL",
-		UserID:   "Bob",
-		Action:   "Buy",
 		WorkerID: 4,
 	}
 	body := sampleATxInit.ToCSV()
@@ -302,7 +362,7 @@ func pushSampleATxCancel() {
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Headers: amqp.Table{
-				"transType": "autoTxCancel",
+				"transType": "autoTxKey",
 			},
 			Body: []byte(body),
 		})
