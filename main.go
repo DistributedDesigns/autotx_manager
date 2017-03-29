@@ -243,7 +243,7 @@ func watchTriggers() {
 			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
 			fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
 			filledPrice := currQuote.Price
-			err := filledPrice.Mul(float64(numStock))
+			err = filledPrice.Mul(float64(numStock))
 			filledPrice.Add(remCash) // Re-add the unfilled value
 			failOnError(err, "Failed to multiply price")
 			autoTxFilled := types.AutoTxFilled{
