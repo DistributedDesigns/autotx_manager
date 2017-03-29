@@ -183,12 +183,12 @@ func watchTriggers() {
 	defer ch.Close()
 
 	q, err := ch.QueueDeclare(
-		fmt.Sprintf("%s:autoTx:updater", config.Redis.KeyPrefix), //name
-		true,  // durable
-		true,  // delete when unused
-		false, // exclusive
-		false, // no wait
-		nil,   // arguments
+		"autoTx:updater", //name
+		true,             // durable
+		true,             // delete when unused
+		false,            // exclusive
+		false,            // no wait
+		nil,              // arguments
 	)
 
 	failOnError(err, "Failed to declare a receive queue")
