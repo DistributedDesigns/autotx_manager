@@ -267,6 +267,7 @@ func watchTriggers() {
 			failOnError(err, "Failed to publish a message")
 			fmt.Println(sellTree)
 			sellTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			delete(autoTxLookUp, autoTx.AutoTxKey)
 			fmt.Println(sellTree)
 			// Remove from autoTxStore
 			return true
@@ -300,6 +301,7 @@ func watchTriggers() {
 			failOnError(err, "Failed to publish a message")
 			fmt.Println(buyTree)
 			buyTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+			delete(autoTxLookUp, autoTx.AutoTxKey)
 			fmt.Println(buyTree)
 			// Remove from autoTxStore
 			return true
