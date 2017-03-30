@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/distributeddesigns/currency"
@@ -130,8 +131,19 @@ type TreeKey struct {
 	Stock, Action string
 }
 
-var autoTxStore = make(map[TreeKey]llrb.LLRB)
-var autoTxLookUp = make(map[types.AutoTxKey]types.AutoTxInit) // {stock, user} -> autoTx
+// AutoTxStore : The autoTxStorage struct
+type AutoTxStore struct {
+	AutoTxTrees  map[TreeKey]llrb.LLRB
+	AutoTxLookup map[types.AutoTxKey]types.AutoTxInit
+	Mutex        sync.RWMutex
+}
+
+// AutoTxStorage : The autoTxStorage struct
+var AutoTxStorage = AutoTxStore{
+	AutoTxTrees:  make(map[TreeKey]llrb.LLRB),
+	AutoTxLookup: make(map[types.AutoTxKey]types.AutoTxInit), // {stock, user} -> autoTx
+	Mutex:        sync.RWMutex{},
+}
 
 var sampleATxCancel = types.AutoTxKey{
 	Stock:  "AAPL",
@@ -141,15 +153,17 @@ var sampleATxCancel = types.AutoTxKey{
 
 func insertTransaction(aTx types.AutoTxInit) {
 	currTreeKey := TreeKey{aTx.AutoTxKey.Stock, aTx.AutoTxKey.Action}
-	tree, found := autoTxStore[currTreeKey]
+	AutoTxStorage.Mutex.Lock()
+	tree, found := AutoTxStorage.AutoTxTrees[currTreeKey]
 	if !found {
 		tree = *llrb.New()
 	}
 	tree.InsertNoReplace(aTx)
-	autoTxLookUp[aTx.AutoTxKey] = aTx
+	AutoTxStorage.AutoTxLookup[aTx.AutoTxKey] = aTx
 	//fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	//fmt.Println(tree)
-	autoTxStore[currTreeKey] = tree
+	AutoTxStorage.AutoTxTrees[currTreeKey] = tree
+	AutoTxStorage.Mutex.Unlock()
 	//fmt.Println(autoTxStore)
 }
 
@@ -159,20 +173,27 @@ func fillTransaction(item types.AutoTxInit) {
 
 func cancelTransaction(aTxKey types.AutoTxKey) {
 	currTreeKey := TreeKey{aTxKey.Stock, aTxKey.Action}
-	tree, found := autoTxStore[currTreeKey]
+	AutoTxStorage.Mutex.Lock()
+	tree, found := AutoTxStorage.AutoTxTrees[currTreeKey]
+	AutoTxStorage.Mutex.Unlock()
 	if !found {
 		// Tree doesn't exist. Throw err?
 		consoleLog.Debugf("Tree for stock %s with action %s not found\n", aTxKey.Stock, aTxKey.Action)
 		return
 	}
-	autoTx, found := autoTxLookUp[aTxKey]
+	AutoTxStorage.Mutex.Lock()
+	autoTx, found := AutoTxStorage.AutoTxLookup[aTxKey]
+	AutoTxStorage.Mutex.Unlock()
 	if !found {
 		// User has no autoTx. What a nerd.
 		consoleLog.Debugf("aTx for stock %s with action %s not found\n", aTxKey.Stock, aTxKey.Action)
 		return
 	}
+	AutoTxStorage.Mutex.Lock()
 	tree.Delete(autoTx) // Remove the transaction from the tree
-	delete(autoTxLookUp, aTxKey)
+	AutoTxStorage.AutoTxTrees[currTreeKey] = tree
+	delete(AutoTxStorage.AutoTxLookup, aTxKey)
+	AutoTxStorage.Mutex.Unlock()
 	//fmt.Println(tree)
 }
 
@@ -219,8 +240,10 @@ func watchTriggers() {
 		currQuote, err := types.ParseQuote(string(d.Body[:]))
 		failOnError(err, "Failed to parse Quote")
 		consoleLog.Debugf("New Quote for %s at price %s\n", currQuote.Stock, currQuote.Price.String())
-		buyTree, buyFound := autoTxStore[TreeKey{currQuote.Stock, "Buy"}] // tree, found
-		sellTree, sellFound := autoTxStore[TreeKey{currQuote.Stock, "Sell"}]
+		AutoTxStorage.Mutex.Lock()
+		buyTree, buyFound := AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] // tree, found
+		sellTree, sellFound := AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}]
+		AutoTxStorage.Mutex.Unlock()
 		if !buyFound && !sellFound {
 			// Tree doesn't exist. Throw err?
 			consoleLog.Debugf("BuyTree and SellTre for stock %s does not exist\n", currQuote.Stock)
@@ -239,7 +262,7 @@ func watchTriggers() {
 		//Sell
 		sellTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Sell item has Trigger price %s, which is more than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			fmt.Printf("Sell item has Trigger price %s, which is more than QuotePrice of %s\n", autoTx.Trigger, currQuote.Price)
 			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
 			//fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
 			filledPrice := currQuote.Price
@@ -266,17 +289,22 @@ func watchTriggers() {
 				})
 			failOnError(err, "Failed to publish a message")
 			//fmt.Println(sellTree)
+			AutoTxStorage.Mutex.Lock()
 			sellTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-			delete(autoTxLookUp, autoTx.AutoTxKey)
+			AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}] = sellTree
+			delete(AutoTxStorage.AutoTxLookup, autoTx.AutoTxKey)
+			AutoTxStorage.Mutex.Unlock()
 			//fmt.Println(sellTree)
 			return true
 		})
-		autoTxStore[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
+		AutoTxStorage.Mutex.Lock()
+		AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
+		AutoTxStorage.Mutex.Unlock()
 
 		//Buy
 		buyTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
 			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Buy item has Trigger price %s, which is less than %f\n", autoTx.Trigger, currQuote.Price.ToFloat())
+			fmt.Printf("Buy item has Trigger price %s, which is less than QuotePrice of %s\n", autoTx.Trigger, currQuote.Price)
 
 			filledStock, remCash := currQuote.Price.FitsInto(autoTx.Amount)
 			autoTxFilled := types.AutoTxFilled{
@@ -299,13 +327,18 @@ func watchTriggers() {
 				})
 			failOnError(err, "Failed to publish a message")
 			//fmt.Println(buyTree)
+			AutoTxStorage.Mutex.Lock()
 			buyTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-			delete(autoTxLookUp, autoTx.AutoTxKey)
+			AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] = buyTree
+			delete(AutoTxStorage.AutoTxLookup, autoTx.AutoTxKey)
+			AutoTxStorage.Mutex.Unlock()
 			//fmt.Println(buyTree)
 			// Remove from autoTxStore
 			return true
 		})
-		autoTxStore[TreeKey{currQuote.Stock, "Buy"}] = buyTree //update map with new buy tree TODO: POINTER STUFF SO THIS ISN'T SHIT
+		AutoTxStorage.Mutex.Lock()
+		AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] = buyTree //update map with new buy tree TODO: POINTER STUFF SO THIS ISN'T SHIT
+		AutoTxStorage.Mutex.Unlock()
 
 		//fmt.Println(tree.Len())
 
