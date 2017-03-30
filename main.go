@@ -131,14 +131,14 @@ type TreeKey struct {
 	Stock, Action string
 }
 
-// AutoTxStore : The autoTxStorage struct
+// AutoTxStore : The autoTxStore struct
 type AutoTxStore struct {
 	AutoTxTrees  map[TreeKey]llrb.LLRB
 	AutoTxLookup map[types.AutoTxKey]types.AutoTxInit
 	Mutex        sync.RWMutex
 }
 
-// AutoTxStorage : The autoTxStorage struct
+// AutoTxStorage : The autoTxStorage
 var AutoTxStorage = AutoTxStore{
 	AutoTxTrees:  make(map[TreeKey]llrb.LLRB),
 	AutoTxLookup: make(map[types.AutoTxKey]types.AutoTxInit), // {stock, user} -> autoTx
@@ -155,10 +155,12 @@ func insertTransaction(aTx types.AutoTxInit) {
 	currTreeKey := TreeKey{aTx.AutoTxKey.Stock, aTx.AutoTxKey.Action}
 	AutoTxStorage.Mutex.Lock()
 	tree, found := AutoTxStorage.AutoTxTrees[currTreeKey]
+	AutoTxStorage.Mutex.Unlock()
 	if !found {
 		tree = *llrb.New()
 	}
 	tree.InsertNoReplace(aTx)
+	AutoTxStorage.Mutex.Lock()
 	AutoTxStorage.AutoTxLookup[aTx.AutoTxKey] = aTx
 	//fmt.Printf("Inserting autoTx: %s\n", aTx.ToCSV())
 	//fmt.Println(tree)
