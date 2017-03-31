@@ -261,86 +261,90 @@ func watchTriggers() {
 			Trigger: currQuote.Price,
 		}
 
-		//Sell
-		sellTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
-			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Sell item has Trigger price %s, which is more than QuotePrice of %s\n", autoTx.Trigger, currQuote.Price)
-			numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
-			//fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
-			filledPrice := currQuote.Price
-			err = filledPrice.Mul(float64(numStock))
-			filledPrice.Add(remCash) // Re-add the unfilled value
-			failOnError(err, "Failed to multiply price")
-			autoTxFilled := types.AutoTxFilled{
-				AutoTxKey: autoTx.AutoTxKey,
-				AddFunds:  filledPrice,
-				AddStocks: 0,
-			}
-			body := autoTxFilled.ToCSV()
-			err = ch.Publish(
-				autoTxExchange,                // exchange
-				strconv.Itoa(autoTx.WorkerID), // routing key
-				false, // mandatory
-				false, // immediate
-				amqp.Publishing{
-					ContentType: "text/csv",
-					Headers: amqp.Table{
-						"transType": "autoTxInit",
-					},
-					Body: []byte(body),
-				})
-			failOnError(err, "Failed to publish a message")
-			//fmt.Println(sellTree)
+		if sellFound {
+			//Sell
+			sellTree.AscendGreaterOrEqual(modelATx, func(i llrb.Item) bool {
+				autoTx := i.(types.AutoTxInit)
+				fmt.Printf("Sell item has Trigger price %s, which is more than QuotePrice of %s\n", autoTx.Trigger, currQuote.Price)
+				numStock, remCash := autoTx.Trigger.FitsInto(autoTx.Amount) // amount of stock we reserved from their port
+				//fmt.Printf("Can fill %d stocks with remCash %f\n", numStock, remCash.ToFloat())
+				filledPrice := currQuote.Price
+				err = filledPrice.Mul(float64(numStock))
+				filledPrice.Add(remCash) // Re-add the unfilled value
+				failOnError(err, "Failed to multiply price")
+				autoTxFilled := types.AutoTxFilled{
+					AutoTxKey: autoTx.AutoTxKey,
+					AddFunds:  filledPrice,
+					AddStocks: 0,
+				}
+				body := autoTxFilled.ToCSV()
+				err = ch.Publish(
+					autoTxExchange,                // exchange
+					strconv.Itoa(autoTx.WorkerID), // routing key
+					false, // mandatory
+					false, // immediate
+					amqp.Publishing{
+						ContentType: "text/csv",
+						Headers: amqp.Table{
+							"transType": "autoTxInit",
+						},
+						Body: []byte(body),
+					})
+				failOnError(err, "Failed to publish a message")
+				//fmt.Println(sellTree)
+				AutoTxStorage.Mutex.Lock()
+				sellTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+				AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}] = sellTree
+				delete(AutoTxStorage.AutoTxLookup, autoTx.AutoTxKey)
+				AutoTxStorage.Mutex.Unlock()
+				//fmt.Println(sellTree)
+				return true
+			})
 			AutoTxStorage.Mutex.Lock()
-			sellTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-			AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}] = sellTree
-			delete(AutoTxStorage.AutoTxLookup, autoTx.AutoTxKey)
+			AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
 			AutoTxStorage.Mutex.Unlock()
-			//fmt.Println(sellTree)
-			return true
-		})
-		AutoTxStorage.Mutex.Lock()
-		AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Sell"}] = sellTree //update map with new sell tree TODO: POINTER STUFF SO THIS ISN'T SHIT
-		AutoTxStorage.Mutex.Unlock()
+		}
 
-		//Buy
-		buyTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
-			autoTx := i.(types.AutoTxInit)
-			fmt.Printf("Buy item has Trigger price %s, which is less than QuotePrice of %s\n", autoTx.Trigger, currQuote.Price)
+		if buyFound {
+			//Buy
+			buyTree.DescendLessOrEqual(modelATx, func(i llrb.Item) bool {
+				autoTx := i.(types.AutoTxInit)
+				fmt.Printf("Buy item has Trigger price %s, which is less than QuotePrice of %s\n", autoTx.Trigger, currQuote.Price)
 
-			filledStock, remCash := currQuote.Price.FitsInto(autoTx.Amount)
-			autoTxFilled := types.AutoTxFilled{
-				AutoTxKey: autoTx.AutoTxKey,
-				AddFunds:  remCash,
-				AddStocks: filledStock,
-			}
-			body := autoTxFilled.ToCSV()
-			err = ch.Publish(
-				autoTxExchange,                // exchange
-				strconv.Itoa(autoTx.WorkerID), // routing key
-				false, // mandatory
-				false, // immediate
-				amqp.Publishing{
-					ContentType: "text/csv",
-					Headers: amqp.Table{
-						"transType": "autoTxInit",
-					},
-					Body: []byte(body),
-				})
-			failOnError(err, "Failed to publish a message")
-			//fmt.Println(buyTree)
+				filledStock, remCash := currQuote.Price.FitsInto(autoTx.Amount)
+				autoTxFilled := types.AutoTxFilled{
+					AutoTxKey: autoTx.AutoTxKey,
+					AddFunds:  remCash,
+					AddStocks: filledStock,
+				}
+				body := autoTxFilled.ToCSV()
+				err = ch.Publish(
+					autoTxExchange,                // exchange
+					strconv.Itoa(autoTx.WorkerID), // routing key
+					false, // mandatory
+					false, // immediate
+					amqp.Publishing{
+						ContentType: "text/csv",
+						Headers: amqp.Table{
+							"transType": "autoTxInit",
+						},
+						Body: []byte(body),
+					})
+				failOnError(err, "Failed to publish a message")
+				//fmt.Println(buyTree)
+				AutoTxStorage.Mutex.Lock()
+				buyTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
+				AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] = buyTree
+				delete(AutoTxStorage.AutoTxLookup, autoTx.AutoTxKey)
+				AutoTxStorage.Mutex.Unlock()
+				//fmt.Println(buyTree)
+				// Remove from autoTxStore
+				return true
+			})
 			AutoTxStorage.Mutex.Lock()
-			buyTree.Delete(i) //I have no idea if this is gonna shit the bed for multideletes
-			AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] = buyTree
-			delete(AutoTxStorage.AutoTxLookup, autoTx.AutoTxKey)
+			AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] = buyTree //update map with new buy tree TODO: POINTER STUFF SO THIS ISN'T SHIT
 			AutoTxStorage.Mutex.Unlock()
-			//fmt.Println(buyTree)
-			// Remove from autoTxStore
-			return true
-		})
-		AutoTxStorage.Mutex.Lock()
-		AutoTxStorage.AutoTxTrees[TreeKey{currQuote.Stock, "Buy"}] = buyTree //update map with new buy tree TODO: POINTER STUFF SO THIS ISN'T SHIT
-		AutoTxStorage.Mutex.Unlock()
+		}
 
 		//fmt.Println(tree.Len())
 
